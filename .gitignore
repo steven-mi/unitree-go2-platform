@@ -1,0 +1,4 @@
+recordings/
+!recordings/.gitkeep
+scans/*
+!scans/.gitkeep

@@ -1,0 +1,3 @@
+[submodule "unitree_webrtc_connect"]
+	path = unitree_webrtc_connect
+	url = https://github.com/steven-mi/unitree_webrtc_connect.git

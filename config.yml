@@ -1,0 +1,148 @@
+# Single source of truth for every tunable parameter in the backend.
+# See docs/PARAMETERS.md for the full reference. Every key below is REQUIRED:
+# the backend reads its values straight from here (no hidden code defaults).
+#
+# NOTE: the dashboard Settings panel rewrites this file when you save robot_ip /
+# aes_128_key, which strips comments. Keep a copy of comments in PARAMETERS.md.
+
+# ---------------------------------------------------------------------------
+# Robot connection
+# ---------------------------------------------------------------------------
+# Any string value may reference an env var: ${VAR} or ${VAR:-fallback}.
+robot_ip: ${ROBOT_IP}
+
+# Per-device AES-128 key (32 hex chars). Required on Go2 >= 1.1.15 / G1 >= 1.5.1.
+# Fetch with: unitree-fetch-aes-key
+aes_128_key: ''
+
+# ---------------------------------------------------------------------------
+# Floor-plan builder (probabilistic occupancy grid -> walls + interior)
+# ---------------------------------------------------------------------------
+floorplan:
+  # Bump to invalidate cached floor plans and force regeneration after changes.
+  revision: 13
+  resolution: 0.05          # m, grid cell size (5 cm)
+  # Height band: a lidar return counts only if z_min <= z <= z_max, and a cell
+  # earns WALL evidence only if it holds at least wall_min_points returns above
+  # wall_height_min. This is what separates true walls from floor clutter, so the
+  # gate must sit well above the floor (a value <= z_min disables it and paints
+  # clutter as walls).
+  z_min: 0.10               # m, floor clip; returns below are ignored
+  z_max: 1.6                # m, ceiling clip; returns above are ignored
+  wall_height_min: 0.2      # m, a cell is a wall candidate only if a return reaches this
+  # Real walls stack several voxels vertically within one (x, y) column, while a
+  # stray reflection or a passing head is a lone point. Requiring this many
+  # returns above wall_height_min in a column before it earns wall evidence
+  # rejects those lone points — important because hits_to_confirm can be 1, so a
+  # single spurious frame would otherwise paint a permanent wall. Set to 1 to
+  # disable (every tall return confirms); raise to reject more, at the risk of
+  # dropping genuinely sparse / distant walls.
+  wall_min_points: 2        # tall returns required in a column to earn wall evidence
+  # Evidence model (counts, not log-odds). Each scan a cell is hit as tall
+  # structure adds +1; each scan a ray passes through it subtracts 1. A cell
+  # becomes a wall once its net score reaches hits_to_confirm, and free once it
+  # drops to -clears_to_free. Higher values reject more noise but map slower.
+  hits_to_confirm: 1        # net wall observations before a cell is drawn as a wall
+  clears_to_free: 2         # net ray clears before a cell is treated as free space
+  max_ray_m: 14.0           # m, max ray-cast length for free-space clearing
+  # Output cleanup.
+  cleanup_radius: 2         # cells, bridges wall gaps (close) + smooths interior (open)
+  min_wall_cells: 5         # drop wall blobs smaller than this many cells (speckle)
+  path_clearance_m: 0.30    # m, radius around the walked path to clear false walls
+  margin_m: 0.6             # m, padding when expanding grid bounds for new returns
+  max_dim: 2400             # cells, max grid dimension (larger maps downsampled)
+
+# ---------------------------------------------------------------------------
+# Path planning (A* on the occupancy grid)
+# ---------------------------------------------------------------------------
+planner:
+  # Single hard footprint + soft centering (both read fresh at each plan).
+  # Walls are inflated by exactly robot_radius_m and the path may go anywhere the
+  # dog physically fits; the centering cost then maximizes distance to walls.
+  robot_radius_m: 0.25      # m, robot footprint radius — walls inflate by this, so the
+                            # planned path keeps the body this far off every wall. Must
+                            # exceed the Go2 half-width (~0.16 m) with margin or the dog
+                            # grazes walls at pinch points; the driving cone now trusts
+                            # the map and won't second-guess walls, so this is the only
+                            # thing keeping the body off them. Lower toward ~0.22 only if
+                            # a known-tight doorway becomes unreachable.
+  # Centering: the path is penalized for getting closer than centering_clearance_m
+  # to a wall (penalty ramps linearly from 0 at that distance to centering_weight
+  # right at the wall). In corridors narrower than 2x this, the cheapest route is
+  # the centre line; in wider spaces it simply keeps this much clearance.
+  centering_weight: 4.0       # mild bias off walls (0 disables; higher = more centred)
+  centering_clearance_m: 0.8  # m, distance from walls beyond which no extra reward
+  # Corner rounding: after A*/string-pull the route is a polyline with hard
+  # corners. Chaikin-style cutting rounds them off slightly so the dog walks more
+  # naturally. Each cut is rejected if it would leave the inflated free space, so
+  # smoothing never costs clearance. Kept light on purpose.
+  corner_smoothing_iters: 2   # rounding passes (0 disables; more = smoother/denser)
+  corner_smoothing_ratio: 0.2   # fraction of each edge trimmed per corner (0..0.5)
+  max_snap_radius: 40       # cells, max search when snapping start/goal to free cell
+
+# ---------------------------------------------------------------------------
+# Obstacle detection (shared by route planning + the driving safety pause)
+# ---------------------------------------------------------------------------
+# Live obstacles come from the connected robot's lidar. The detection geometry
+# (height band + forward field of view) is shared; the two consumers then add
+# their own knobs (grid cleanup for planning, stop/resume distances for driving).
+obstacle:
+  # Detection geometry (shared).
+  z_min: 0.12               # m, ignore floor returns below this height
+  z_max: 1.20               # m, ignore ceiling / tall sparse noise above this
+  front_half_angle_deg: 30  # forward field-of-view half-angle; sides/back ignored (180 = all around)
+  self_clear_m: 0.35        # m, never treat the robot's own footprint as an obstacle
+  # Route-planning mask (extra blocked cells fused into the A* grid).
+  dilate_cells: 1           # thicken raw returns into a solid blob
+  wall_guard_cells: 3       # ignore returns hugging known walls (localization slop)
+  min_cells: 4              # drop obstacle clusters smaller than this (speckle)
+  # Driving pause (lidar-only safety, secondary to the Go2 firmware avoidance).
+  stop_m: 0.75              # m, halt when something is closer than this ahead
+  clear_m: 0.90             # m, resume only after clearance exceeds this (hysteresis)
+  clear_s: 0.5              # s, sustained-clear time before resuming
+  cone_half_m: 0.38         # m, half-width of the forward stop cone
+  body_min_x: 0.15          # m, ignore returns inside the robot body envelope
+  min_points: 5             # min lidar hits to trigger a stop
+  forward_block_min_vx: 0.04    # m/s, only check ahead when intending forward motion
+  wait_poll_s: 0.05         # s, poll interval while paused
+  pause_max_s: 60.0         # s, max wait during an obstacle pause
+  # On the final leg the planner already proved the goal is reachable, so a wall
+  # behind a goal placed close to it must not trip the stop cone forever. During
+  # the final approach the cone only reacts to obstacles nearer than
+  # (distance-to-goal - this margin), letting the dog finish arrivals that sit
+  # closer than stop_m to a wall.
+  final_approach_margin_m: 0.10  # m, gap kept between the relaxed cone and the goal
+
+# ---------------------------------------------------------------------------
+# Navigation motion (closed-loop path following)
+# ---------------------------------------------------------------------------
+nav:
+  speed: 0.15               # m/s, point-and-go cruise target (read fresh each run)
+  min_speed: 0.1           # m/s, lower clamp for `speed`
+  max_speed: 0.2            # m/s, upper clamp for `speed`
+  turn_speed: 0.9          # rad/s, max yaw rate while tracking / turning
+  move_hz: 50.0             # Hz, command/control loop rate
+  lookahead_m: 0.85         # m, pure-pursuit lookahead distance
+  slow_dist_m: 0.45         # m, distance over which speed ramps down near a waypoint
+  waypoint_reached_m: 0.40  # m, radius to consider a waypoint reached
+  kp_yaw: 2.0               # proportional gain on heading error
+  pose_max_age_s: 0.4       # s, stop & wait if localization (pose) is older than this
+                            # (prevents circling when odom can't keep up with speed)
+  stuck_timeout_s: 60.0     # s, abort a leg if no waypoint progress for this long
+  stuck_recover_s: 10.0     # s, skip ahead a waypoint after this with no progress
+  turn_in_place_rad: 0.85   # rad, yaw error above which we rotate in place first
+  turn_resume_rad: 0.20     # rad, keep rotating in place until aligned within this
+                            # (hysteresis: once turning starts it finishes the turn
+                            # instead of moving off while still badly misaligned)
+  # Wireless-joystick calibration (intent velocity -> full stick deflection).
+  wireless_vx_full: 0.35    # m/s at ly = 1.0
+  wireless_vy_full: 0.35    # m/s at lx = 1.0
+  wireless_vyaw_full: 2.5   # rad/s at rx = 1.0
+
+# ---------------------------------------------------------------------------
+# Manual teleop (keyboard / joystick drive caps)
+# ---------------------------------------------------------------------------
+teleop:
+  max_vx: 0.6               # m/s, forward/back cap
+  max_vy: 0.25              # m/s, lateral (strafe) cap
+  max_vyaw: 0.85            # rad/s, turn cap
