@@ -290,7 +290,6 @@ def save_path(
     payload = {
         "route": normalized_route,
         "destinations": normalized_destinations,
-        "points": normalized_route,
     }
     with open(path / "path.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)

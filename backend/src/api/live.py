@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from api.deps import invalidate_session_cache
+from api.deps import ConnectedStatus, invalidate_session_cache
+from api.schemas import PathPointBody
 from live.manager import live_manager
-
-
-class PathPointBody(BaseModel):
-    x: float
-    y: float
 
 
 class FollowPathBody(BaseModel):
@@ -31,18 +28,7 @@ router = APIRouter(prefix="/api/live", tags=["live"])
 
 
 def _live_status_dict() -> dict:
-    s = live_manager.status()
-    return {
-        "state": s.state,
-        "connected": s.connected,
-        "recording": s.recording,
-        "session_id": s.session_id,
-        "error": s.error,
-        "robot_ip": s.robot_ip,
-        "duration_s": s.duration_s,
-        "lidar_count": s.lidar_count,
-        "video_count": s.video_count,
-    }
+    return asdict(live_manager.status())
 
 
 @router.get("/status")
@@ -160,26 +146,17 @@ def api_live_sport(body: SportCommandBody):
 
 
 @router.get("/frame")
-def api_live_frame(t: float | None = None):
-    status = live_manager.status()
-    if not status.connected:
-        raise HTTPException(503, "Not connected to robot")
+def api_live_frame(_status: ConnectedStatus, t: float | None = None):
     return live_manager.frame_at(t)
 
 
 @router.get("/session")
-def api_live_session():
-    status = live_manager.status()
-    if not status.connected:
-        raise HTTPException(503, "Not connected to robot")
+def api_live_session(_status: ConnectedStatus):
     return live_manager.session_detail()
 
 
 @router.get("/lidar/{seq}")
-def api_live_lidar(seq: int, max_points: int = 0):
-    status = live_manager.status()
-    if not status.connected:
-        raise HTTPException(503, "Not connected to robot")
+def api_live_lidar(seq: int, _status: ConnectedStatus, max_points: int = 0):
     try:
         data = live_manager.load_lidar_points_binary(seq, max_points=max_points)
         return Response(content=data, media_type="application/octet-stream")
@@ -189,14 +166,12 @@ def api_live_lidar(seq: int, max_points: int = 0):
 
 @router.get("/floorplan")
 def api_live_floorplan(
+    _status: ConnectedStatus,
     t: float | None = None,
     x: float | None = None,
     y: float | None = None,
     lidar_seq: int | None = None,
 ):
-    status = live_manager.status()
-    if not status.connected:
-        raise HTTPException(503, "Not connected to robot")
     try:
         return live_manager.build_floor_plan(upto_t=t, robot_x=x, robot_y=y, lidar_seq=lidar_seq)
     except ValueError as exc:
@@ -204,10 +179,7 @@ def api_live_floorplan(
 
 
 @router.get("/video/latest.jpg")
-def api_live_video_latest():
-    status = live_manager.status()
-    if not status.connected:
-        raise HTTPException(503, "Not connected to robot")
+def api_live_video_latest(_status: ConnectedStatus):
     data = live_manager.latest_video_jpg()
     if not data:
         raise HTTPException(404, "No video frame yet")

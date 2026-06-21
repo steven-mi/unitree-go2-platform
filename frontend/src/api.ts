@@ -572,7 +572,7 @@ export async function fetchScanPath(scanId: string): Promise<ScanPathData> {
   if (!res.ok) throw new Error("Failed to load path");
   const data = await res.json();
   return {
-    route: data.route ?? data.points ?? [],
+    route: data.route ?? [],
     destinations: data.destinations ?? [],
   };
 }
@@ -596,7 +596,7 @@ export async function saveScanPath(
   }
   const data = await res.json();
   return {
-    route: data.route ?? data.points ?? [],
+    route: data.route ?? [],
     destinations: data.destinations ?? [],
   };
 }
@@ -609,7 +609,6 @@ export async function clearScanPath(scanId: string): Promise<void> {
 export interface PlanRouteResult {
   route: PathPoint[];
   destinations: PathPoint[];
-  points: PathPoint[];
   point_count: number;
   cell_count: number;
 }

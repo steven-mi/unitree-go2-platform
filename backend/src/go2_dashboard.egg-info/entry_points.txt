@@ -1,2 +1,0 @@
-[console_scripts]
-go2-dashboard = app:main
